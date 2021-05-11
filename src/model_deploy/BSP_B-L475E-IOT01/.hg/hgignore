@@ -26,3 +26,4 @@ Debug
 mbed_settings.py
 *.py[cod]
 # subrepo ignores
+BSP_B-L475E-IOT01

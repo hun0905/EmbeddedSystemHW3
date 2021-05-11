@@ -26,14 +26,14 @@ WiFiInterface *wifi;
 InterruptIn btn2(USER_BUTTON);
 EventQueue queue(64 * EVENTS_EVENT_SIZE);
 EventQueue queue_g(32 * EVENTS_EVENT_SIZE);
-EventQueue queue_s(32 * EVENTS_EVENT_SIZE);
 EventQueue mqtt_queue;
+EventQueue mode_queue;
 Thread mqtt_thread(osPriorityHigh);
 Thread t_g;
 Thread t_s;
+Thread t_mode;
 
 
-bool pub = false;
 int16_t pData[3] = {0};
 int idR[32] = {0};
 int indexR = 0;;
@@ -51,11 +51,12 @@ uLCD_4DGL uLCD(D1, D0, D2);//Problem point. connect ulcd
 BufferedSerial pc(USBTX, USBRX);
 DigitalIn mypin(USER_BUTTON);
 DigitalOut myled(LED3);
-bool mode = true;
+bool mode_p = false;
+bool tilt_m = false;
 
 void Display(int &i);
 void tilt(Arguments *in, Reply *out);
-void stop(Arguments *in, Reply *out){mode = !mode;}
+void stop(Arguments *in, Reply *out){tilt_m = !tilt_m;}
 void gesture_UI(Arguments *in, Reply *out);
 int PredictGesture(float* output);
 void gesture();
@@ -63,8 +64,13 @@ void messageArrived(MQTT::MessageData& md);
 void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client);
 void close_mqtt();
 void WIFI();
+void mode();
 RPCFunction rpcG(&gesture_UI, "gesture_UI");
 RPCFunction rpcT(&tilt, "tilt");
+void mode()
+{
+  mode_p = !mode_p;
+}
 void Display(int &i)
 {
     uLCD.cls();
@@ -82,59 +88,28 @@ void tilt(Arguments *in, Reply *out)
     char strings[20];
     out->putData("\n");
     out->putData("tilt mode");
-    t_s.start(callback(&queue_s, &EventQueue::dispatch_forever));
-    mode = false;
-    while(mode == false)
+    tilt_m = true;
+    mode_p = false;
+    while(tilt_m == true)
     {
         BSP_ACCELERO_Init();
         BSP_ACCELERO_AccGetXYZ(pData);
         double deg = (double)pData[2]/sqrt(pData[0]*pData[0]+pData[1]*pData[1]+pData[2]*pData[2]);
         int tmp = acos(deg) * 180 / 3.1415926;
         Display(tmp);
-        if(  deg < cos(angle* PI/ 180.0) )
+        if(  deg < cos(angle* PI/ 180.0))
         {
           angle = 0;
+          mode_p = true;
+          ThisThread::sleep_for(1000ms);
+          mode_p = false;
           out->putData("larger than threshold\n");
-          pub = true;
-         
-          //queue_s.call(&WIFI);  
-          ThisThread::sleep_for(5000ms);
           break;
         }
     }
-    pub = false;
     out->putData("exit tilt mode\n");
     myled = 0;
 }   
-void WIFI()
-{
-    wifi = WiFiInterface::get_default_instance();
-    
-    printf("\nConnecting to %s...\r\n", MBED_CONF_APP_WIFI_SSID);
-    int ret = wifi->connect(MBED_CONF_APP_WIFI_SSID, MBED_CONF_APP_WIFI_PASSWORD, NSAPI_SECURITY_WPA_WPA2);
-    
-    NetworkInterface* net = wifi;
-    MQTTNetwork mqttNetwork(net);
-    MQTT::Client<MQTTNetwork, Countdown> client2(mqttNetwork);
-    //TODO: revise host to your IP
-    const char* host = "192.168.30.230";
-    printf("Connecting to TCP network...\r\n");
-
-    SocketAddress sockAddr;
-    sockAddr.set_ip_address(host);
-    sockAddr.set_port(1883);
-    printf("address is %s/%d\r\n", (sockAddr.get_ip_address() ? sockAddr.get_ip_address() : "None"),  (sockAddr.get_port() ? sockAddr.get_port() : 0) ); //check settin
-    int rc = mqttNetwork.connect(sockAddr);//(host, 1883);
-    
-    printf("Successfully connected!\r\n");
-    MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
-    data.MQTTVersion = 3;
-    data.clientID.cstring = "Mbed2"; 
-    //mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
-    publish_message(&client2);
-    return;
-
-}
 void gesture_UI(Arguments *in, Reply *out){
   bool success = true;
   t_g.start(callback(&queue_g, &EventQueue::dispatch_forever));
@@ -142,16 +117,6 @@ void gesture_UI(Arguments *in, Reply *out){
   // Have code here to call another RPC function to wake up specific led or close it.
   char buffer[200], outbuf[256];
   char strings[20];
-  /*sprintf(strings, "set angle %d",angle);
-  
-  strcpy(buffer, strings);
-  RPC::call(buffer, outbuf);
-  if (success) {
-      out->putData(buffer);
-  } else {
-      out->putData("Failed to execute.");
-  }*/
-  //Wifi();
 }
 
 
@@ -191,7 +156,7 @@ int PredictGesture(float* output) {
 
 void gesture() 
 {
-    
+  tilt_m = false;
   // Whether we should clear the buffer next time we fetch data
   bool should_clear_buffer = false;
   bool got_data = false;
@@ -250,7 +215,7 @@ void gesture()
     error_reporter->Report("Set up failed\n"); 
   }
   error_reporter->Report("Set up successful...\n");
-  while (mode == true) {
+  while (tilt_m == false) {
     // Attempt to read new data from the accelerometer
     got_data = ReadAccelerometer(error_reporter, model_input->data.f,
                                  input_length, should_clear_buffer);
@@ -273,11 +238,11 @@ void gesture()
     // Produce an output
     if (gesture_index < label_num) {
         angle = (gesture_index+3)*10;
+        Display(angle);
         error_reporter->Report(config.output_message[gesture_index]);
         if(!mypin)
         {
           printf("set angle %d\n",angle);
-          Display(angle);
           break;
         }
     }
@@ -298,18 +263,22 @@ void messageArrived(MQTT::MessageData& md) {
 }
 
 void publish_message(MQTT::Client<MQTTNetwork, Countdown>* client) {
-    MQTT::Message message;
-    char buff[100];
-    sprintf(buff, "%d", angle);
-    message.qos = MQTT::QOS0;
-    message.retained = false;
-    message.dup = false;
-    message.payload = (void*) buff;
-    message.payloadlen = strlen(buff) + 1;
-    int rc = client->publish(topic, message);
-
-    printf("rc:  %d\r\n", rc);
-    printf("Puslish message: %s\r\n", buff);
+    if(mode_p)
+    {
+      MQTT::Message message;
+      char buff[100];
+      sprintf(buff, "%d", angle);
+      message.qos = MQTT::QOS0;
+      message.retained = false;
+      message.dup = false;
+      message.payload = (void*) buff;
+      message.payloadlen = strlen(buff) + 1;
+      int rc = client->publish(topic, message);
+  
+      printf("rc:  %d\r\n", rc);
+      printf("Puslish message: %s\r\n", buff);
+      mode_p = false;
+    }
 }
 
 void close_mqtt() {
@@ -334,7 +303,7 @@ int main() {
   MQTTNetwork mqttNetwork(net);
   MQTT::Client<MQTTNetwork, Countdown> client(mqttNetwork);
   //TODO: revise host to your IP
-  const char* host = "192.168.30.230";
+  const char* host = "192.168.145.190";
   printf("Connecting to TCP network...\r\n");
 
   SocketAddress sockAddr;
@@ -355,11 +324,12 @@ int main() {
   if (client.subscribe(topic, MQTT::QOS0, messageArrived) != 0){
           printf("Fail to subscribe\r\n");
   }  
+  t_mode.start(callback(&mode_queue, &EventQueue::dispatch_forever));
   mqtt_thread.start(callback(&mqtt_queue, &EventQueue::dispatch_forever));
   
-  btn2.rise(mqtt_queue.event(&publish_message, &client));
+  btn2.rise(mode_queue.event(&mode));
   //btn3.rise(&close_mqtt);
-
+  mqtt_queue.call_every(500ms,&publish_message, &client);
   while(1) {
     memset(buf, 0, 256);      // clear buffer
     for(int i=0; ; i++) {

@@ -2,7 +2,7 @@ import paho.mqtt.client as paho
 import time
 import serial
 
-serdev = '/dev/ttyACM1'                # use the device name you get from `ls /dev/ttyACM*`
+serdev = '/dev/ttyACM0'                # use the device name you get from `ls /dev/ttyACM*`
 s = serial.Serial(serdev, 9600)
 # https://os.mbed.com/teams/mqtt/wiki/Using-MQTT#python-client
 # MQTT broker hosted on local machine
@@ -10,7 +10,7 @@ mqttc = paho.Client()
 i = 0
 # Settings for connection
 # TODO: revise host to your IP
-host = "192.168.30.230"
+host = "192.168.145.190"
 topic = "Mbed"
 
 # Callbacks
