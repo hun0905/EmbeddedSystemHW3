@@ -1,4 +1,5 @@
-===HW3===
+HW3
+===
 首先用 $git clone https://github.com/hun0905/HW3.git    將所需的檔案抓下來
  調整mbed_app.json的WiFi SSID,PASSWORD 以及 wifi_mqtt/mqtt_client.py的host
  然後 $ cd HW3/src/model_deploy
